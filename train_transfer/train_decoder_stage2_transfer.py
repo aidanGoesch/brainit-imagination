@@ -57,6 +57,9 @@ def parse_arguments():
     parser.add_argument('--C', dest='centers', type=int, default=128, help='number of centers')
     parser.add_argument('--NUM_EPOCHS', dest='num_epochs', type=int, default=200, help='number of epochs')
     parser.add_argument('--NUM_GPUS', dest='num_gpus', type=int, default=2, help='number of GPUs to use')
+    parser.add_argument('--SUBJECT', dest='subject', type=int, default=1, help='subject number (1-8) to fine-tune on')
+    parser.add_argument('--SAVE_FULL_CKPT', dest='save_full_checkpoint', action='store_const', const=True, default=False,
+                        help='save full diffusion checkpoint (default: save only voxel embeddings)')
 
     #parser.add_argument('--SAVE_EVERY_N_EPOCHS', dest='save_every_n_epochs', type=int, default=1, help='save every n epochs')
     return parser.parse_args()
@@ -65,20 +68,28 @@ def parse_arguments():
 # CONFIGURATION AND CONSTANTS
 # =============================================================================
 
-diffusion_model_path = "data/external_models/MindEyeV2/unclip6_epoch0_step110000.ckpt"
-diffusion_model_cfg = "data/external_models/MindEyeV2/unclip6.yaml"
-save_dir = "results/saved_models/"
-TRANSFER_SUB = "transfer_sub"
-data_dir = "data/transfer/"
+save_dir      = "results/saved_models/transfer/"
+data_dir      = "data/nsd_data/transfer/"
+nsd_data_dir  = "data/nsd_data/"
 derived_data_dir = "data/derived_data/"
+transfer_derived_data_dir = "data/derived_data/transfer/"
 tensorbaord_dir =  'logs/tensorboard/decoder_stage2/'
 
 args = parse_arguments()
 
+TRANSFER_SUB = f"subj{args.subject}"  # subject held out in base training, now fine-tuned on
+
 # Model checkpoint paths for transfer learning
-COMBINED_CHECKPOINT_PATH = save_dir + "combined_model.ckpt"
-FINETUNED_MODEL_PATH = save_dir + f"decoder_transfer_{TRANSFER_SUB}_offline_clipg_ext-1.pth"
-# Control variable for all saves/outputs
+# Combined model from stage2 base training (trained without this subject)
+base_stage2_name = f"decoder_stage2_base_remove_sub_{args.subject}"
+if args.ext:
+    base_stage2_name = f"decoder_stage2_ext-1_base_remove_sub_{args.subject}"
+COMBINED_CHECKPOINT_PATH = save_dir + f"{base_stage2_name}/last.ckpt"
+# Decoder transfer model (output of train_decoder_transfer.py --CLIPG --EXT --SAVE)
+finetuned_model_name = f"decoder_transfer_{TRANSFER_SUB}_clipg_save.pth"
+if args.ext:
+    finetuned_model_name = f"decoder_transfer_{TRANSFER_SUB}_clipg_ext{args.ext_sample_factor}_save.pth"
+FINETUNED_MODEL_PATH = save_dir + finetuned_model_name
 
 # Training hyperparameters
 LEARNING_RATE = 1e-5
@@ -96,10 +107,12 @@ image_transform = transforms.Compose([
 
 
 
-name = f"decoder_stage2_transfer_{TRANSFER_SUB}_offline"
+name = f"decoder_stage2_transfer_{TRANSFER_SUB}"
       
 if(args.ext):
     name+="_ext"+str(args.ext_sample_factor)
+
+VOXEL_EMBED_PATH = save_dir + f"{name}_voxel_embed.pth"
 
 
 
@@ -140,23 +153,21 @@ def main():
     
     #################################################     load data ###################################################
     
-    # Load subject transfer data
-    file = np.load(data_dir + f"{TRANSFER_SUB}_fmri.npz")
-    single_sub_fmri = file['train']
-    
+    # Load subject transfer data (produced by prepare_fmri_single_session.py)
+    fmri_file = np.load(data_dir + "subjects_single_ses_fmri.npz")
+    single_sub_fmri = fmri_file[TRANSFER_SUB]
+
+    imgid_file = np.load(data_dir + "subjects_single_ses_imgid.npz")
+    img_ids = imgid_file[TRANSFER_SUB]
+
     num_voxels_subjects = np.array([single_sub_fmri.shape[1]])
     N = num_voxels_subjects.sum()
 
-    # Load image data
-    images = np.load(data_dir + f"{TRANSFER_SUB}_imgs_256.npz")
-    images_train = images['train']
+    images_train = np.load(nsd_data_dir + "nsd_images_256.npy")[img_ids]
 
-    val_ind = file['val_single_ind']
-    train_ind = np.ones(single_sub_fmri.shape[0], dtype=bool)
-    train_ind[val_ind] = False
     if(args.ext):  
-        fmri_ext = np.load(derived_data_dir + f"ext_fmri_{TRANSFER_SUB}.npy")
-        images_ext = np.load(data_dir + "ext_images_256.npy")
+        fmri_ext = np.load(transfer_derived_data_dir + f"ext_fmri_{TRANSFER_SUB}.npy")
+        images_ext = np.load(nsd_data_dir + "ext_images_256.npy")
 
     # Set up training data
     X_train = single_sub_fmri
@@ -167,7 +178,7 @@ def main():
     if args.v2c_mapping is not None:
         v2c_mapping = np.load(args.v2c_mapping)
     else:
-        v2c_mapping = np.load(data_dir + f"v2c_128_mapping_gmm_{TRANSFER_SUB}.npy")
+        v2c_mapping = np.load(transfer_derived_data_dir + f"v2c_128_mapping_gmm_{TRANSFER_SUB}.npy")
 
 
     print("load data")
@@ -216,8 +227,9 @@ def main():
     
     #################################################     load models ###################################################
     # Load models
-    diffusion_engine = load_diffusion_engine(diffusion_model_cfg, diffusion_model_path)
-    gnn_model = torch.load(save_dir + "decoder_base_clipg_ext-1_save.pth")
+    diffusion_engine = load_diffusion_engine()
+    # Base decoder trained without this subject (used as backbone for combined model)
+    gnn_model = torch.load(save_dir + f"decoder_clipg_ext-1_base_remove_sub_{args.subject}_save.pth")
 
     # Load combined checkpoint
     model = CombinedDiffusionEngine.load_from_checkpoint(
@@ -254,7 +266,7 @@ def main():
         check_val_every_n_epoch=1,  # logs at every validation epoch
         enable_model_summary=False,
         logger=logger,
-        callbacks=[checkpoint_callback],
+        callbacks=[checkpoint_callback] if args.save_full_checkpoint else [],
        
     )
     
@@ -266,6 +278,13 @@ def main():
     
     trainer.fit(model, train_dataloader)
     print("Training complete!", flush=True)
+
+    if not args.save_full_checkpoint:
+        trained_model = trainer.model
+        if hasattr(trained_model, "module"):
+            trained_model = trained_model.module
+        torch.save(trained_model.gnn_model.voxel_embed.data, VOXEL_EMBED_PATH)
+        print(f"Saved voxel embeddings to {VOXEL_EMBED_PATH}", flush=True)
     
     print("GPU memory after training:", flush=True)
     print_gpu_memory_usage()

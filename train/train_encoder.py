@@ -59,18 +59,14 @@ val_sub = 0
 #save_model = '/home/romanb/data/NSD_models/model.pth'
 data_dir = 'data/nsd_data/'
 save_dir = 'results/saved_models/'
-num_voxels_subjects = np.load(data_dir + 'num_voxels_all_subjects.npy')
-num_voxels_subjects = num_voxels_subjects.sum(1).astype(int)
-
-
-
-file_ = np.load(data_dir + "fmri_v2.npz")
-type_sample = file_["type_sample"]
-single_sub = file_['single_sub']
-single_sub_fmri = file_['single_sub_fmri']
-multi_sub_fmri = file_['multi_sub_fmri']
-embeds     = np.load(data_dir + "all_images_v2_224.npy")
-val_ind = file_['val_single_ind']
+fmri_data = np.load(data_dir + "fmri_v2.npz")
+num_voxels_subjects = fmri_data['num_voxels_subjects'].astype(int)
+type_sample = fmri_data["type_sample"]
+single_sub = fmri_data['single_sub']
+single_sub_fmri = fmri_data['single_sub_fmri']
+multi_sub_fmri = fmri_data['multi_sub_fmri']
+embeds     = np.load(data_dir + "nsd_images_224.npy")
+val_ind = fmri_data['val_single_ind']
 train_ind = np.ones(single_sub_fmri.shape[0], dtype=bool)
 train_ind[val_ind] = False
 

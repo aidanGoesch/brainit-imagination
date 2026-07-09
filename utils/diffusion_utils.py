@@ -17,10 +17,14 @@ import numpy as np
 # Directory constants
 MINDEYE_MODEL_DIR = "data/external_models/MindEyeV2"
 SDXL_MODEL_DIR = "data/external_models/SDXL"
+UNCLIP6_YAML = "src/MindEyeV2/generative_models/configs/unclip6.yaml"
+SDXL_BASE_YAML = "src/MindEyeV2/generative_models/configs/inference/sd_xl_base.yaml"
+UNCLIP6_CKPT = os.path.join(MINDEYE_MODEL_DIR, "unclip6_epoch0_step110000.ckpt")
+SDXL_CKPT = os.path.join(SDXL_MODEL_DIR, "zavychromaxl_v30.safetensors")
 
-def prep_sdxl(CONFIG_PATH=os.path.join(MINDEYE_MODEL_DIR, "unclip6.yaml"), 
-              sdxl_config_path=os.path.join(SDXL_MODEL_DIR, "sd_xl_base.yaml"), 
-              sdxl_ckpt_path=os.path.join(SDXL_MODEL_DIR, "zavychromaxl_v30.safetensors")):
+def prep_sdxl(CONFIG_PATH=UNCLIP6_YAML,
+              sdxl_config_path=SDXL_BASE_YAML,
+              sdxl_ckpt_path=SDXL_CKPT):
     config = OmegaConf.load(CONFIG_PATH)
     config = OmegaConf.to_container(config, resolve=True)
     unclip_params = config["model"]["params"]
@@ -49,8 +53,8 @@ def prep_sdxl(CONFIG_PATH=os.path.join(MINDEYE_MODEL_DIR, "unclip6.yaml"),
 
 
 
-def load_diffusion_engine(config_path=os.path.join(MINDEYE_MODEL_DIR, "unclip6.yaml"), 
-                         ckpt_path=os.path.join(MINDEYE_MODEL_DIR, "unclip6_epoch0_step110000.ckpt")):
+def load_diffusion_engine(config_path=UNCLIP6_YAML,
+                         ckpt_path=UNCLIP6_CKPT):
     """Load diffusion engine with configuration"""
     config = OmegaConf.load(config_path)
     print(f"loaded config from path: {config_path}", flush=True)
@@ -110,10 +114,10 @@ def load_diffusion_engine(config_path=os.path.join(MINDEYE_MODEL_DIR, "unclip6.y
 
 
 
-def enhance_recons(all_recons, 
-                   unclip_config_path=os.path.join(MINDEYE_MODEL_DIR, "unclip6.yaml"), 
-                   sdxl_config_path=os.path.join(SDXL_MODEL_DIR, "sd_xl_base.yaml"), 
-                   sdxl_ckpt_path=os.path.join(SDXL_MODEL_DIR, "zavychromaxl_v30.safetensors"), 
+def enhance_recons(all_recons,
+                   unclip_config_path=UNCLIP6_YAML,
+                   sdxl_config_path=SDXL_BASE_YAML,
+                   sdxl_ckpt_path=SDXL_CKPT,
                    num_samples=1):
     img_size = 768
     rec_imgs = []

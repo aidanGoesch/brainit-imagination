@@ -40,7 +40,7 @@ class EncDataset(Dataset):
 
 
 class EmbedGraphDataset(Dataset):
-    def __init__(self, X, Y,v2c_mapping, sub  ,sub_num_voxels ,num_voxels_to_sample = int(5000), sample = True , num_centers = 256, rand_subject = False , transform = None):
+    def __init__(self, X, Y,v2c_mapping, sub  ,sub_num_voxels ,num_voxels_to_sample = int(5000), sample = True , num_centers = 256, rand_subject = False , rand_subject_ids = None, transform = None):
         self.X = X#.astype(np.float32)
         self.Y = Y#.astype(np.float32)
         self.num_voxels_to_sample = num_voxels_to_sample
@@ -53,6 +53,7 @@ class EmbedGraphDataset(Dataset):
         self.sub_vox_start_ind = (self.sub_vox_end_ind - sub_num_voxels).astype(np.int32)
         self.rand_subject = rand_subject
         self.num_subjects = len(sub_num_voxels)
+        self.rand_subject_ids = np.arange(self.num_subjects) if rand_subject_ids is None else np.asarray(rand_subject_ids, dtype=np.int32)
         self.transform = transform
         
     def __len__(self):
@@ -102,7 +103,7 @@ class EmbedGraphDataset(Dataset):
              y = self.transform(y/255.0)
 
         if(self.rand_subject):
-            sub = np.random.randint(self.num_subjects)
+            sub = int(np.random.choice(self.rand_subject_ids))
             x = x[self.sub_vox_start_ind[sub]:self.sub_vox_end_ind[sub]]
         else:
             sub = int(self.sub[idx])

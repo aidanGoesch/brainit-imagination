@@ -1,0 +1,15 @@
+data/nsd_data/imgs/
+data/nsd_data/roi_masks/
+data/nsd_data/raw_fmri/
+data/nsd_data/experiment/
+data/nsd_data/ext_images_112.npy
+data/nsd_data/ext_images_224.npy
+data/nsd_data/ext_images_256.npy
+data/nsd_data/fmri_v2.npz
+data/nsd_data/nsd_images_112.npy
+data/nsd_data/nsd_images_224.npy
+data/nsd_data/nsd_images_256.npy
+data/external_models/MindEyeV2/unclip6_epoch0_step110000.ckpt
+data/external_models/SDXL/zavychromaxl_v30.safetensors
+data/Untitled.ipynb
+saved_models/final_model.ckpt

@@ -10,6 +10,7 @@ import sys
 import argparse
 import numpy as np
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 from skimage.io import imsave
@@ -23,6 +24,7 @@ sys.path.append(os.path.join(os.getcwd(), 'src', 'MindEyeV2', 'generative_models
 from utils.datasets import EmbedGraphDataset, collate, DatasetExtWraper
 from utils.diffusion_utils import load_diffusion_engine, enhance_recons
 from utils.low_level_utils import LowLevelREC
+from utils.metric_functions import compute_metrics
 from models.combined_diffusion_engine import CombinedDiffusionEngine
 import src.MindEyeV2.generative_models.sgm
 
@@ -41,11 +43,11 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Full inference pipeline')
     parser.add_argument('--run_name', type=str, default='nsd_rec', 
                        help='subdirectory name inside output directory')
-    parser.add_argument('--vgg_model', type=str, default='decoder_vgg_ext-1_batch64_save.pth',
+    parser.add_argument('--vgg_model', type=str, default=None,
                        help='VGG decoder model name')
-    parser.add_argument('--clipg_model', type=str, default='decoder_clipg_ext-1_save.pth',
+    parser.add_argument('--clipg_model', type=str, default=None,
                        help='CLIP-guided decoder model name')
-    parser.add_argument('--stage2_model', type=str, default='combined_model.ckpt',
+    parser.add_argument('--stage2_model', type=str, default=None,
                        help='Stage 2 diffusion model name')
     parser.add_argument('--v2c_mapping', type=str, default=None,
                        help='path to v2c mapping file')
@@ -53,8 +55,16 @@ def parse_args():
                        help='number of centers')
     parser.add_argument('--subjects', type=int, nargs='+', default=[0,1,4,6],
                        help='subject indices to process')
+    parser.add_argument('--transfer', action='store_true',
+                       help='transfer learning inference: single held-out subject with subject-specific voxel space')
+    parser.add_argument('--subject', type=int, default=1,
+                       help='held-out subject number (1-8) for transfer inference')
     parser.add_argument('--test', action='store_true',
                        help='test mode: only process 5 images of subject 0')
+    parser.add_argument('--full_stage2', action='store_true',
+                       help='transfer: use full transfer stage2 checkpoint instead of base checkpoint + voxel embeddings')
+    parser.add_argument('--voxel_embed_path', type=str, default=None,
+                       help='transfer: path to stage2 voxel embedding file')
     
     args = parser.parse_args()
     
@@ -62,6 +72,27 @@ def parse_args():
     if args.test:
         args.subjects = [0]
     
+    # Transfer inference processes only the held-out subject, indexed as 0 in its own voxel space
+    if args.transfer:
+        args.subjects = [0]
+
+    # Resolve default model names for the selected pipeline
+    if args.transfer:
+        sub = f"subj{args.subject}"
+        stage2_name = f"decoder_stage2_transfer_{sub}_ext4"
+        base_stage2_name = f"decoder_stage2_ext-1_base_remove_sub_{args.subject}"
+        args.vgg_model = args.vgg_model or f"transfer/decoder_transfer_{sub}_vgg_cont_ext4_batch64_save.pth"
+        args.clipg_model = args.clipg_model or f"transfer/decoder_transfer_{sub}_clipg_ext4_save.pth"
+        if args.full_stage2:
+            args.stage2_model = args.stage2_model or f"transfer/{stage2_name}/last.ckpt"
+        else:
+            args.stage2_model = args.stage2_model or f"transfer/{base_stage2_name}/last.ckpt"
+            args.voxel_embed_path = args.voxel_embed_path or f"transfer/{stage2_name}_voxel_embed.pth"
+    else:
+        args.vgg_model = args.vgg_model or 'decoder_vgg_ext-1_batch64_save.pth'
+        args.clipg_model = args.clipg_model or 'decoder_clipg_ext-1_save.pth'
+        args.stage2_model = args.stage2_model or 'combined_model.ckpt'
+
     return args
 
 
@@ -69,35 +100,40 @@ def load_data(args):
     """Load fMRI data and create data structures"""
     print("Loading data...")
     
-    # Load subject voxel counts
-    num_voxels_subjects = np.load(DATA_DIR + 'num_voxels_all_subjects.npy')
-    num_voxels_subjects = num_voxels_subjects.sum(1).astype(int)
-    N = num_voxels_subjects.sum()
-    
     # Load fMRI data
-    file_ = np.load(DATA_DIR + "fmri_v2.npz")
-    type_sample = file_["type_sample"]
-    multi_sub_fmri = file_['multi_sub_fmri']
+    fmri_data = np.load(DATA_DIR + "fmri_v2.npz")
+    num_voxels_subjects = fmri_data['num_voxels_subjects'].astype(int)
+    type_sample = fmri_data["type_sample"]
+    multi_sub_fmri = fmri_data['multi_sub_fmri']
+    
+    # Transfer learning uses a single held-out subject in its own voxel space:
+    # slice the subject's voxels and treat them as the whole (0-indexed) voxel set
+    if args.transfer:
+        end = np.cumsum(num_voxels_subjects)
+        start = end - num_voxels_subjects
+        sub = args.subject - 1
+        multi_sub_fmri = multi_sub_fmri[:, start[sub]:end[sub]]
+        num_voxels_subjects = np.array([num_voxels_subjects[sub]])
+    
+    N = num_voxels_subjects.sum()
     
     # Load v2c mapping
     if args.v2c_mapping is not None:
         v2c_mapping = np.load(args.v2c_mapping)
+    elif args.transfer:
+        v2c_mapping = np.load(DERIVED_DATA_DIR + f"transfer/v2c_128_mapping_gmm_subj{args.subject}.npy")
     else:
         v2c_mapping = np.load(DERIVED_DATA_DIR + "v2c_128_mapping_gmm_v2.npy")
     
-    # Load ground truth images (if available)
-    imgs_path = DATA_DIR + "all_images_v2.npy"
-    imgs = None
-    if os.path.exists(imgs_path):
-        imgs = np.load(imgs_path)
-        imgs = imgs[type_sample == 2]
+    gt_imgs = np.load(DATA_DIR + "nsd_images_224.npy")
+    gt_imgs = gt_imgs[type_sample == 2]
     
     return {
         'num_voxels_subjects': num_voxels_subjects,
         'N': N,
         'multi_sub_fmri': multi_sub_fmri,
         'v2c_mapping': v2c_mapping,
-        'imgs': imgs
+        'gt_imgs': gt_imgs,
     }
 
 
@@ -126,7 +162,14 @@ def load_models(args, device):
         map_location="cpu",
         diffusion_engine=diffusion_engine, 
         gnn_model=gnn_model
-    ).to(device)
+    )
+
+    if args.transfer and not args.full_stage2:
+        print(f"  Loading stage 2 voxel embeddings: {args.voxel_embed_path}")
+        voxel_embed = torch.load(os.path.join(MODEL_DIR, args.voxel_embed_path))
+        combined_model.gnn_model.voxel_embed = nn.Parameter(voxel_embed, requires_grad=False)
+
+    combined_model = combined_model.to(device)
     
     return {
         'vgg_model': vgg_model,
@@ -311,6 +354,18 @@ def save_results(imgs_lw, imgs_semantic, imgs_enhanced, data, args, num_samples)
     print(f"Results saved to {output_dir}")
 
 
+def compute_and_print_metrics(recons_by_sub, gt_imgs, args, num_samples, recon_type):
+    """Compute and print reconstruction metrics against ground truth."""
+    gt_imgs = gt_imgs[:num_samples]
+
+    print(f"\nComputing metrics ({recon_type})...")
+    for sub in args.subjects:
+        print(f"\n--- {recon_type} | subject {sub} ---")
+        metrics = compute_metrics(recons_by_sub[sub], gt_imgs)
+        for name, value in metrics.items():
+            print(f"  {name}: {value:.4f}")
+
+
 def main():
     """Main inference pipeline"""
     args = parse_args()
@@ -321,6 +376,7 @@ def main():
     
     # Load data
     data = load_data(args)
+    gt_imgs = data['gt_imgs']
     
     # Determine number of samples
     if args.test:
@@ -345,6 +401,8 @@ def main():
     
     # Save results
     save_results(imgs_lw_sub, imgs_semantic_sub, imgs_enhanced_sub, data, args, num_samples)
+
+    compute_and_print_metrics(imgs_enhanced_sub, gt_imgs, args, num_samples, 'enhanced')
     
     print("Inference complete!")
 

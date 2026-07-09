@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
 Script to extract CLIP embeddings from image arrays.
-Transfer learning version for data/transfer pipeline.
 """
 
+import argparse
 import os
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
@@ -12,8 +12,6 @@ import numpy as np
 import open_clip
 import torch
 import kornia
-
-TRANSFER_SUB = "transfer_sub"
 
 
 def preprocess(x):
@@ -73,16 +71,23 @@ def extract_clip_embeddings(images, model_clip):
 
 
 def main():
-    data_dir = "data/transfer"
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--inference-only", action="store_true",
+                        help="Skip COCO images and only process the NSD images.")
+    args = parser.parse_args()
+
+    # Paths - nsd_data directory
+    data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'nsd_data')
     
-    # Input file (224x224 images)
-    input_file = f"{TRANSFER_SUB}_imgs_224.npz"
-    input_path = os.path.join(data_dir, input_file)
-    
-    if not os.path.exists(input_path):
-        print(f"Error: {input_path} not found!")
-        print("Please run prepare_imgs_transfer.py first to generate 224x224 images.")
-        return
+    if args.inference_only:
+        input_files = [
+            'nsd_images_224.npy'
+        ]
+    else:
+        input_files = [
+            'nsd_images_224.npy',
+            'ext_images_224.npy'
+        ]
     
     # Initialize CLIP model
     print("Loading CLIP model...")
@@ -96,29 +101,33 @@ def main():
     model_clip.eval()
     print("  Model loaded!")
     
-    print(f"\n{'='*60}")
-    print(f"Processing: {input_file}")
-    print(f"{'='*60}")
-    
-    # Load images (train only)
-    print(f"Loading {input_file}...")
-    data = np.load(input_path)
-    train_images = data['train']
-    print(f"  Train shape: {train_images.shape}, dtype: {train_images.dtype}")
-    
-    # Extract CLIP embeddings for train set
-    print(f"\n{'='*60}")
-    print("Processing train set...")
-    print(f"{'='*60}")
-    train_clip = extract_clip_embeddings(train_images, model_clip)
-    
-    # Save embeddings
-    output_file = f"{TRANSFER_SUB}_imgs_clip.npy"
-    output_path = os.path.join(data_dir, output_file)
-    
-    print(f"\nSaving to {output_file}...")
-    np.save(output_path, train_clip)
-    print(f"  Saved train shape: {train_clip.shape}, dtype: {train_clip.dtype}")
+    for input_file in input_files:
+        input_path = os.path.join(data_dir, input_file)
+        
+        if not os.path.exists(input_path):
+            print(f"Warning: {input_path} not found, skipping...")
+            continue
+        
+        print(f"\n{'='*60}")
+        print(f"Processing: {input_file}")
+        print(f"{'='*60}")
+        
+        # Load images
+        print(f"Loading {input_file}...")
+        images = np.load(input_path)
+        print(f"  Shape: {images.shape}, dtype: {images.dtype}")
+        
+        # Extract CLIP embeddings
+        clip_embeddings = extract_clip_embeddings(images, model_clip)
+        
+        # Save embeddings
+        base_name = input_file.replace('_224.npy', '')
+        output_file = f"{base_name}_clip.npy"
+        output_path = os.path.join(data_dir, output_file)
+        
+        print(f"Saving to {output_file}...")
+        np.save(output_path, clip_embeddings)
+        print(f"  Saved shape: {clip_embeddings.shape}, dtype: {clip_embeddings.dtype}")
     
     print(f"\n{'='*60}")
     print("Done!")

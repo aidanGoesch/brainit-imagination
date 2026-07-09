@@ -24,5 +24,6 @@ ext_images is an image array from https://cocodataset.org/#download 2017 Unlabel
 
 ## Data Source
 
-The NSD dataset should be downloaded from the official Natural Scenes Dataset website:
-https://naturalscenesdataset.org/
+- The NSD dataset should be downloaded from the official Natural Scenes Dataset website: https://naturalscenesdataset.org/
+- **Before downloading NSD data, you must complete the [NSD Data Access Agreement](https://docs.google.com/forms/d/e/1FAIpQLSduTPeZo54uEMKD-ihXmRhx0hBDdLHNsVyeo_kCb8qbyAkXuQ/viewform).**
+- ROI masks can be downloaded using `download/download_roi_masks`. If the script fails (the gdown API can be unreliable), download manually from: https://drive.google.com/drive/folders/1DUf3nGNNFk6YjRjQtZPfAY5N105GoGJb

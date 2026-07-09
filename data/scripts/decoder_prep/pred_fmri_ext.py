@@ -1,5 +1,6 @@
 import sys
 import os
+from pathlib import Path
 import torch 
 import imageio.v2 as iio
 from skimage.transform import rescale, resize, downscale_local_mean
@@ -40,8 +41,7 @@ def trans_imgs_shift(img):
     return img
 
 
-num_voxels_subjects = np.load(data_dir + 'num_voxels_all_subjects.npy')
-num_voxels_subjects = num_voxels_subjects.sum(1).astype(int)
+num_voxels_subjects = np.load(data_dir + 'fmri_v2.npz')['num_voxels_subjects'].astype(int)
 NUM_VOXELS = int(num_voxels_subjects.sum())
 
 
@@ -56,4 +56,6 @@ for i in range(ext_imgs.shape[0]):
     with torch.no_grad():
         pred = encoder_model(image_tensor.cuda(),torch.arange(NUM_VOXELS).unsqueeze(0))
     embeds[i] = pred.detach().cpu().numpy()
-np.save("data/derived_data/ext_fmri.npy", embeds.astype(np.float16))
+output_dir = Path(__file__).resolve().parent.parent.parent / "derived_data"
+output_dir.mkdir(parents=True, exist_ok=True)
+np.save(output_dir / "ext_fmri.npy", embeds.astype(np.float16))

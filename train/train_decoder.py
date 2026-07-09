@@ -140,8 +140,8 @@ embed_dim_vox = args.dim
 print(name)
 writer = SummaryWriter(tensorbaord_dir+name)
 
-num_voxels_subjects = np.load(data_dir + 'num_voxels_all_subjects.npy')
-num_voxels_subjects = num_voxels_subjects.sum(1).astype(int)
+fmri_data = np.load(data_dir + "fmri_v2.npz")
+num_voxels_subjects = fmri_data['num_voxels_subjects'].astype(int)
 N = num_voxels_subjects.sum()
     
 param = dec_param(N)
@@ -171,21 +171,20 @@ device = torch.device("cuda")
 
   
 
-file_ = np.load(data_dir + "fmri_v2.npz")
-type_sample = file_["type_sample"]
-single_sub = file_['single_sub']
-single_sub_fmri = file_['single_sub_fmri']
-multi_sub_fmri = file_['multi_sub_fmri']
+type_sample = fmri_data["type_sample"]
+single_sub = fmri_data['single_sub']
+single_sub_fmri = fmri_data['single_sub_fmri']
+multi_sub_fmri = fmri_data['multi_sub_fmri']
 
 
-val_ind = file_['val_single_ind']
+val_ind = fmri_data['val_single_ind']
 train_ind = np.ones(single_sub_fmri.shape[0], dtype=bool)
 train_ind[val_ind] = False
 if(args.ext):  
     fmri_ext = np.load(derived_data_dir + "ext_fmri.npy")
 
 if(args.vgg):
-    embed = np.load(data_dir + "all_images_v2_112.npy")
+    embed = np.load(data_dir + "nsd_images_112.npy")
     embed = embed[type_sample == 1]
     
     if(args.ext):
@@ -193,7 +192,7 @@ if(args.vgg):
 
 if(args.clipg):
     train_total_acc = False
-    embed = np.load(data_dir + "all_images_v2_clip.npy")
+    embed = np.load(data_dir + "nsd_images_clip.npy")
     embed = embed[type_sample == 1]
 
     if(args.ext):

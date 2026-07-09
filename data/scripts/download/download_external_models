@@ -1,0 +1,35 @@
+#!/bin/bash
+# Download auxiliary model weights for Brain-IT.
+#
+# Source: https://huggingface.co/datasets/pscotti/mindeyev2
+# Requires: huggingface_hub (pip install huggingface_hub)
+#
+# Downloads:
+#   data/external_models/MindEyeV2/unclip6_epoch0_step110000.ckpt
+#   data/external_models/SDXL/zavychromaxl_v30.safetensors
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MINDEYE_DIR="${MINDEYE_DIR:-${SCRIPT_DIR}/../../external_models/MindEyeV2}"
+SDXL_DIR="${SDXL_DIR:-${SCRIPT_DIR}/../../external_models/SDXL}"
+
+mkdir -p "${MINDEYE_DIR}" "${SDXL_DIR}"
+
+download_hf() {
+    local repo="$1" file="$2" dest="$3"
+    if [[ -f "${dest}" ]]; then
+        echo "skip (exists): ${dest}"
+    else
+        echo "Downloading ${file} -> ${dest}"
+        python -c "
+from huggingface_hub import hf_hub_download
+hf_hub_download(repo_id='${repo}', filename='${file}', repo_type='dataset', local_dir='$(dirname "${dest}")')
+"
+    fi
+}
+
+download_hf pscotti/mindeyev2 unclip6_epoch0_step110000.ckpt  "${MINDEYE_DIR}/unclip6_epoch0_step110000.ckpt"
+download_hf pscotti/mindeyev2 zavychromaxl_v30.safetensors     "${SDXL_DIR}/zavychromaxl_v30.safetensors"
+
+echo "Done."

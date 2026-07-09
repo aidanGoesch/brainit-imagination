@@ -1,0 +1,49 @@
+#!/bin/bash
+# Download NSD stimulus images (nsd_stimuli.hdf5) and COCO 2017 unlabeled images.
+#
+# Source: s3://natural-scenes-dataset/nsddata_stimuli/stimuli/nsd/nsd_stimuli.hdf5
+# Browser: https://natural-scenes-dataset.s3.amazonaws.com/index.html#nsddata_stimuli/stimuli/nsd/
+# Requires: AWS CLI (aws s3 cp --no-sign-request)
+
+set -euo pipefail
+
+INFERENCE_ONLY=0
+if [[ "${1:-}" == "--inference-only" ]]; then
+    INFERENCE_ONLY=1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+OUT_DIR="${OUT_DIR:-${SCRIPT_DIR}/../../nsd_data/imgs}"
+OUT_FILE="${OUT_FILE:-${OUT_DIR}/nsd_stimuli.hdf5}"
+S3_URI="s3://natural-scenes-dataset/nsddata_stimuli/stimuli/nsd/nsd_stimuli.hdf5"
+
+mkdir -p "${OUT_DIR}"
+
+if [[ -f "${OUT_FILE}" ]]; then
+    echo "skip (exists): ${OUT_FILE}"
+else
+    echo "${S3_URI} -> ${OUT_FILE}"
+    aws s3 cp "${S3_URI}" "${OUT_FILE}" --no-sign-request
+fi
+
+if [[ "${INFERENCE_ONLY}" -eq 1 ]]; then
+    echo "skip (inference-only): COCO images"
+else
+    COCO_ZIP="${OUT_DIR}/unlabeled2017.zip"
+    COCO_DIR="${OUT_DIR}/unlabeled2017"
+    COCO_URI="http://images.cocodataset.org/zips/unlabeled2017.zip"
+
+    if [[ -d "${COCO_DIR}" ]]; then
+        echo "skip (exists): ${COCO_DIR}"
+    else
+        if [[ ! -f "${COCO_ZIP}" ]]; then
+            echo "${COCO_URI} -> ${COCO_ZIP}"
+            wget -O "${COCO_ZIP}" "${COCO_URI}"
+        fi
+        echo "unzipping ${COCO_ZIP} -> ${COCO_DIR}"
+        unzip -q "${COCO_ZIP}" -d "${OUT_DIR}"
+        rm "${COCO_ZIP}"
+    fi
+fi
+
+echo "Done. Files saved under ${OUT_DIR}"

@@ -57,6 +57,7 @@ def parse_arguments():
     parser.add_argument('--C', dest='centers', type=int, default=128, help='number of centers')
     parser.add_argument('--NUM_EPOCHS', dest='num_epochs', type=int, default=10, help='number of epochs')
     parser.add_argument('--NUM_GPUS', dest='num_gpus', type=int, default=2, help='number of GPUs to use')
+    parser.add_argument('--remove_sub', type=int, default=1, help='subject number (1-8) to exclude from training and validation')
 
     #parser.add_argument('--SAVE_EVERY_N_EPOCHS', dest='save_every_n_epochs', type=int, default=1, help='save every n epochs')
     return parser.parse_args()
@@ -65,12 +66,14 @@ def parse_arguments():
 # CONFIGURATION AND CONSTANTS
 # =============================================================================
 
-save_dir = "results/saved_models/"
+save_dir = "results/saved_models/transfer/"
 data_dir = "data/nsd_data/"
 derived_data_dir = "data/derived_data/"
+transfer_derived_data_dir = "data/derived_data/transfer/"
 tensorbaord_dir =  'logs/tensorboard/decoder_stage2/'
 
 args = parse_arguments()
+removed_sub = args.remove_sub
 # Control variable for all saves/outputs
 
 # Training hyperparameters
@@ -93,6 +96,8 @@ name = "decoder_stage2"
       
 if(args.ext):
     name+="_ext"+str(args.ext_sample_factor)
+
+name += "_base_remove_sub_"+str(removed_sub)
 
 
 
@@ -146,7 +151,7 @@ def main():
     train_ind = np.ones(single_sub_fmri.shape[0], dtype=bool)
     train_ind[val_ind] = False
     if(args.ext):  
-        fmri_ext = np.load(derived_data_dir + "ext_fmri.npy")
+        fmri_ext = np.load(transfer_derived_data_dir + f"ext_fmri_base_remove_sub_{removed_sub}.npy")
 
 
     images = np.load(data_dir + "nsd_images_256.npy")
@@ -164,11 +169,20 @@ def main():
     Y_val   = images_single[val_ind]
     single_sub_val = single_sub[val_ind]
 
+    train_mask = single_sub_train != removed_sub
+    val_mask   = single_sub_val   != removed_sub
+    X_train = X_train[train_mask]
+    Y_train = Y_train[train_mask]
+    single_sub_train = single_sub_train[train_mask]
+    X_val = X_val[val_mask]
+    Y_val = Y_val[val_mask]
+    single_sub_val = single_sub_val[val_mask]
+
 
     if args.v2c_mapping is not None:
         v2c_mapping = np.load(args.v2c_mapping)
     else:
-        v2c_mapping = np.load(derived_data_dir + "v2c_128_mapping_gmm_v2.npy")
+        v2c_mapping = np.load(transfer_derived_data_dir + f"v2c_{args.centers}_mapping_gmm_remove_sub_{removed_sub}.npy")
 
 
     print("load data")
@@ -177,8 +191,9 @@ def main():
                                          , sample = True ,num_voxels_to_sample = args.num_vox*1000, 
                                          num_centers = args.centers, transform=image_transform) 
     if(args.ext):
+        ext_valid_subjects = np.delete(np.arange(len(num_voxels_subjects)), removed_sub - 1)
         ext_dataset = EmbedGraphDataset(fmri_ext, images_ext,v2c_mapping , single_sub_train,sub_num_voxels = num_voxels_subjects
-                                       , sample = True ,num_voxels_to_sample = args.num_vox*1000,  rand_subject = True, 
+                                       , sample = True ,num_voxels_to_sample = args.num_vox*1000,  rand_subject = True, rand_subject_ids = ext_valid_subjects,
                                        num_centers = args.centers, transform=image_transform) 
         full_dataset = DatasetExtWraper(train_dataset,ext_dataset, sample_factor = args.ext_sample_factor)
     
@@ -238,7 +253,7 @@ def main():
     diffusion_engine = load_diffusion_engine()
             
     if(args.gnn_model_path == None):
-        gnn_model = torch.load(save_dir+"decoder_clipg_ext-1_save.pth")
+        gnn_model = torch.load(save_dir+f"decoder_clipg_ext-1_base_remove_sub_{removed_sub}_save.pth")
     else:
         gnn_model = torch.load(args.gnn_model_path)
 

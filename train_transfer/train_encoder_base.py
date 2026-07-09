@@ -45,47 +45,57 @@ import sys
 import math
 
 
-import argparse
 import numpy as np
-from utils.train_utils_enc import train
+from utils.train_utils_enc import train, test
 from models.encoder_models import Encoder, encoder_param
 from utils.datasets import EncDataset
 torch.set_default_tensor_type('torch.FloatTensor')
 
+import argparse
 parser = argparse.ArgumentParser()
-parser.add_argument('--SUBJECT', dest='subject', type=int, default=1, help='subject number (1-8) to fine-tune on')
-parser.add_argument('--MODE', dest='mode', type=int, default=0, choices=[0, 1, 2], help='session fraction: 0=full, 1=half, 2=quarter')
+parser.add_argument('--remove_sub', type=int, default=1, help='subject number (1-8) to exclude from training and validation')
 args = parser.parse_args()
+removed_sub = args.remove_sub
 
-TRANSFER_SUB = f"subj{args.subject}"  # subject held out in base training, now fine-tuned on
 batch_size = 32
 lr = 1e-3 #0.001
-if(args.mode == 0):
-    num_samples = 750
-    epochs = 35
-if(args.mode == 1):
-    num_samples = 375
-    epochs = 60
-if(args.mode == 2):
-    num_samples = 187
-    epochs = 70
+epochs = 30
 
 #save_model = '/home/romanb/data/NSD_models/model.pth'
-data_dir      = "data/nsd_data/transfer/"
-nsd_data_dir  = "data/nsd_data/"
-base_save_dir = "results/saved_models/transfer/"
+data_dir = 'data/nsd_data/'
+save_dir = 'results/saved_models/transfer/'
+fmri_data = np.load(data_dir + "fmri_v2.npz")
+num_voxels_subjects = fmri_data['num_voxels_subjects'].astype(int)
+type_sample = fmri_data["type_sample"]
+single_sub = fmri_data['single_sub']
+single_sub_fmri = fmri_data['single_sub_fmri']
+multi_sub_fmri = fmri_data['multi_sub_fmri']
+embeds     = np.load(data_dir + "nsd_images_224.npy")
+val_ind = fmri_data['val_single_ind']
+train_ind = np.ones(single_sub_fmri.shape[0], dtype=bool)
+train_ind[val_ind] = False
 
-# Load subject transfer data (produced by prepare_fmri_single_session.py)
-fmri_file = np.load(data_dir + "subjects_single_ses_fmri.npz")
-single_sub_fmri_train = fmri_file[TRANSFER_SUB][:num_samples]
+embeds_single = embeds[type_sample==1]
+embeds_multi = embeds[type_sample==2]
 
-single_sub_train = np.zeros(single_sub_fmri_train.shape[0]).astype(int)
+embeds_single_train = embeds_single[train_ind]
+single_sub_fmri_train = single_sub_fmri[train_ind]
+single_sub_train = single_sub[train_ind]
 
-imgid_file = np.load(data_dir + "subjects_single_ses_imgid.npz")
-img_ids = imgid_file[TRANSFER_SUB][:num_samples]
-embeds_single_train = np.load(nsd_data_dir + "nsd_images_224.npy")[img_ids]
 
-num_voxels_subjects = np.array([single_sub_fmri_train.shape[1]])
+embeds_single_val = embeds_single[val_ind]
+single_sub_fmri_val = single_sub_fmri[val_ind]
+single_sub_val = single_sub[val_ind]
+
+# exclude removed subject from training and validation
+train_mask = single_sub_train != removed_sub
+val_mask   = single_sub_val   != removed_sub
+embeds_single_train   = embeds_single_train[train_mask]
+single_sub_fmri_train = single_sub_fmri_train[train_mask]
+single_sub_train      = single_sub_train[train_mask]
+embeds_single_val     = embeds_single_val[val_mask]
+single_sub_fmri_val   = single_sub_fmri_val[val_mask]
+single_sub_val        = single_sub_val[val_mask]
 
 NUM_VOXELS = int(num_voxels_subjects.sum())
 
@@ -93,7 +103,7 @@ NUM_VOXELS = int(num_voxels_subjects.sum())
 layer_attn_temp = 20#layer_attn_temp
 layer_attn_temp_factor = layer_attn_temp_factor#layer_attn_temp_factor
 
-name = f"encoder_transfer_{TRANSFER_SUB}"
+name = 'encoder_ch'+str(inner_ch)+'_base_remove_sub_'+str(removed_sub)
 
 print(name)
 enc_param = encoder_param(NUM_VOXELS)
@@ -108,6 +118,10 @@ enc_param.embed_dim_vox = embed_dim_vox
 dataloader_param = {'batch_size': batch_size,
           'shuffle': True,
           'num_workers': 4}
+
+dataloader_val_param = {'batch_size': 8,
+          'shuffle': True,
+          'num_workers': 1}
 
 #enc_param.init = 0.1
 ###################################################
@@ -138,7 +152,9 @@ def trans_imgs_shift(img, max_shift = 3):
 
 
 fmri_dataset_train = EncDataset(embeds_single_train, single_sub_fmri_train, single_sub_train, num_voxels_subjects, preprocess = trans_imgs_shift ,num_voxels_to_sample = 5000)
+fmri_dataset_val  = EncDataset(embeds_single_val, single_sub_fmri_val, single_sub_val, num_voxels_subjects, sample = False, preprocess = trans_imgs)
 train_generator = data.DataLoader(fmri_dataset_train, **dataloader_param)
+test_generator = data.DataLoader(fmri_dataset_val, **dataloader_val_param)
 
 
 
@@ -179,27 +195,29 @@ for param in encoder.parameters():
     
 
 def main():
-    # Load pretrained base model (trained without this subject)
-    model = torch.load(base_save_dir + f"encoder_ch{inner_ch}_base_remove_sub_{args.subject}.pth")
+    os.makedirs(save_dir, exist_ok=True)
+    model = Encoder( enc_param, encoder, select_layers = select_layers,r =r, alpha = alpha, include_reg_tokens= include_reg_tokens).cuda()
+    model.float()
+    if(len(gpu)>1):
+        model = nn.DataParallel(model)
+
     
-    # Freeze all parameters
-    for param in model.parameters():
-        param.requires_grad = False
-    
-    # Reinitialize voxel_embed as trainable
-    model.voxel_embed = torch.nn.Parameter((enc_param.init/(2*np.sqrt(enc_param.embed_dim_vox)))*torch.randn(NUM_VOXELS, enc_param.embed_dim_vox), requires_grad=True).float()
-    
-    model = model.cuda()
-  
+
     optimizer = optim.Adam(model.parameters(), lr=lr, amsgrad = True)
-    
+    scheduler = ReduceLROnPlateau(optimizer, patience=4, verbose=True,mode='max', factor=0.1,threshold=0.003,threshold_mode ='abs')
+    best_metric = 0
     for epoch in range(1,epochs+1):
         print(epoch)
-        train( model, device, train_generator, optimizer, epoch, writer)
-    
-    # Save model after training
-    torch.save(model, "results/saved_models/transfer/"+name+".pth")
-    print(f"Model saved after {epochs} epochs")
+        #scheduler.step()
+        train( model, device, train_generator, optimizer, epoch, writer)  #scheduler
+        metric = test(model, device, train_generator, test_generator, epoch, writer)
+        if(metric>best_metric):
+            best_metric = metric
+            torch.save(model, save_dir+name+".pth")
+        #scheduler.step()
+        scheduler.step(metric)  # loss
+        if(optimizer.param_groups[0]['lr']<1e-7):
+            break
             
 
 

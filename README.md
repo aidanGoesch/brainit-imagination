@@ -24,16 +24,25 @@ conda activate brain-it
 ## Overview
 This repository implements the **Universal Brain Encoder** (image-to-fMRI encoding) and **Brain-IT** (fMRI-to-image reconstruction with the Brain-Interaction Transformer), as described in the papers above.
 
-## Roadmap
+## Quick Start (Inference)
 
-- [ ] **NSD data preparation** — end-to-end scripts and documentation for preparing inputs from [Natural Scenes Dataset](https://naturalscenesdataset.org/) (NSD) data
-- [ ] **Model checkpoints** — published pretrained weights and instructions for where to place them under `results/saved_models/`
-- [ ] **External models** — links and setup for third-party models
-- [ ] **Transfer learning** — full training code and configs for adapting Brain-IT to new subjects or datasets.
+After setting up the environment (see Requirements), run inference with the pretrained models:
 
-## Quick Start
+**Data**
+```bash
+bash data/scripts/run_all_downloads --inference-only
+bash data/scripts/run_all_data_processing --inference-only
+```
 
-For inference on pretrained models, please run:
+**Models**
+
+Pretrained checkpoints are hosted on [Hugging Face](https://huggingface.co/RomanBeliy/Brain-IT) (download_checkpoints.py script will download them):
+```bash
+bash data/scripts/download/download_external_models
+python data/scripts/download/download_checkpoints.py
+```
+
+**Run**
 ```bash
 python inference/full_inference.py
 ```
@@ -49,6 +58,7 @@ Brain-IT/
 │   └── scripts/               # Data processing scripts
 ├── models/                    # Model architectures
 ├── train/                     # Training scripts
+├── train_transfer/            # Transfer learning scripts (see README)
 ├── inference/                 # Inference scripts
 ├── utils/                     # Utility functions
 └── results/                   # Output directory
@@ -56,16 +66,34 @@ Brain-IT/
     └── reconstructions/       # Inference outputs
 ```
 
-## Data Preparation
+## Data Download
 
-### 1. Prepare Images
+Download NSD stimulus images, fMRI beta maps, and ROI masks for all 8 NSD subjects, as well as COCO unlabeled images:
 ```bash
-python data/scripts/prepare_imgs.py
+bash data/scripts/run_all_downloads
 ```
 
-### 2. Extract CLIP Embeddings
+Download pretrained model checkpoints and voxel-to-cluster mapping from [Hugging Face](https://huggingface.co/RomanBeliy/Brain-IT):
 ```bash
-python data/scripts/prepare_clip.py
+python data/scripts/download/download_checkpoints.py
+```
+
+This places files in:
+- `results/saved_models/` — encoder, decoders, and combined diffusion model
+- `data/derived_data/` — voxel-to-cluster mapping (`v2c_128_mapping_gmm_v2.npy`)
+
+## Data Preparation
+
+Run all data processing steps:
+```bash
+bash data/scripts/run_all_data_processing
+```
+
+Or run individual steps manually:
+```bash
+python data/scripts/data_processing/prepare_imgs.py
+python data/scripts/data_processing/prepare_fmri.py
+python data/scripts/data_processing/prepare_clip.py
 ```
 
 ## Training
@@ -75,14 +103,14 @@ python data/scripts/prepare_clip.py
 python train/train_encoder.py
 ```
 
-### 2. Generate Voxel Clusters and Synthetic fMRI
+### 2. Decoder Prep
 After training the encoder, map voxels to clusters and generate synthetic fMRI:
 ```bash
 # Map voxels to clusters
-python data/scripts/get_clusters.py
+python data/scripts/decoder_prep/get_clusters.py
 
 # Generate synthetic fMRI
-python data/scripts/pred_fmri_ext.py
+python data/scripts/decoder_prep/pred_fmri_ext.py
 ```
 
 ### 3. Train Decoder
@@ -125,6 +153,10 @@ results/reconstructions/{run_name}/
     ├── semantic_recons.npy
     └── enhanced_recons.npy
 ```
+
+## Transfer Learning
+
+To adapt pretrained models to held-out NSD subjects, follow the transfer learning pipeline in [`train_transfer/README.md`](train_transfer/README.md).
 
 ## License
 

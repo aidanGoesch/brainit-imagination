@@ -51,31 +51,20 @@ parser.add_argument('--TEST_BATCH', dest='test_batch', type=int, default=16, hel
 parser.add_argument('--LR', dest='lr', type=float, default=5e-4, help='learning rate')
 parser.add_argument('--PATIENCE', dest='patience', type=int, default=5, help='patience for learning rate scheduler')
 parser.add_argument('--ADAMW', dest='adamw', action='store_const', const=True, default=True, help='USE Adamw')
-parser.add_argument('--WARM', dest='warmup', action='store_const', const=True, default=False, help='warmup')
+parser.add_argument('--WARM', dest='warmup', action='store_const', const=True, default=True, help='warmup')
 parser.add_argument('--WARMUP_EPOCHS', dest='warmup_epochs', type=int, default=15, help='number of warmup epochs')
 parser.add_argument('--EXT', dest='ext', action='store_const', const=True, default=False, help='include external data')
-parser.add_argument('--SAMPLE', dest='ext_sample_factor', type=int, default=4, help='external freq sample')
+parser.add_argument('--SAMPLE', dest='ext_sample_factor', type=int, default=-1, help='external freq sample')
 parser.add_argument('--IMAGENT', dest='imagnet_ext', action='store_const', const=True, default=False, help='use imagenet')
 parser.add_argument('--XFORMERS', dest='xformers', action='store_const', const=True, default=True, help='use xformers attention')
+parser.add_argument('--FINETUNE', dest='finetune', type=str, default=None, help='finetune model path')
 parser.add_argument('--V2C_MAPPING', dest='v2c_mapping', type=str, default=None, help='path to v2c mapping file')
 parser.add_argument('--SAVE_LAST', dest='save_last', action='store_const', const=True, default=False, help='save only last model instead of best')
 parser.add_argument('--VGG', dest='vgg', action='store_const', const=True, default=False, help='use VGG feature extraction mode')
-parser.add_argument('--SUBJECT', dest='subject', type=int, default=1, help='subject number (1-8) to fine-tune on')
-parser.add_argument('--MODE', dest='mode', type=int, default=0, choices=[0, 1, 2], help='session fraction: 0=full, 1=half, 2=quarter')
+parser.add_argument('--remove_sub', type=int, default=1, help='subject number (1-8) to exclude from training and validation')
 
 args = parser.parse_args()
-
-TRANSFER_SUB = f"subj{args.subject}"  # subject held out in base training, now fine-tuned on
-
-if(args.mode == 0):
-    num_samples = 750
-    epochs = 400
-if(args.mode == 1):
-    num_samples = 375
-    epochs = 400
-if(args.mode == 2):
-    num_samples = 187
-    epochs = 480 if args.vgg else 600
+removed_sub = args.remove_sub
 
 # Adjust batch size for VGG mode (cap at 64 if larger)
 if args.vgg and args.batch > 64:
@@ -85,7 +74,7 @@ if args.vgg and args.batch > 64:
 
 
 use_wandb = False
-name = f"decoder_transfer_{TRANSFER_SUB}"
+name = "decoder"
 if(args.centers!=128):
     name+="_c"+str(args.centers)
 
@@ -126,6 +115,8 @@ if(args.lr!=5e-4):
     
 if(args.warmup_epochs!=15):
     name+="_warmup_epochs"+str(args.warmup_epochs)     
+
+name += "_base_remove_sub_"+str(removed_sub)
    
            
 if(use_wandb):
@@ -138,12 +129,13 @@ if(use_wandb):
 if(args.save):
     name+="_save"
 
+if(args.finetune is not None):
+    name+="_finetune"
 
-data_dir         = "data/nsd_data/transfer/"
-nsd_data_dir     = "data/nsd_data/"
+data_dir = "data/nsd_data/"
 derived_data_dir = "data/derived_data/"
 transfer_derived_data_dir = "data/derived_data/transfer/"
-save_dir         = "results/saved_models/transfer/"
+save_dir = "results/saved_models/transfer/"
 tensorbaord_dir =  'logs/tensorboard/decoder/'
 os.makedirs(tensorbaord_dir, exist_ok=True)
 
@@ -153,14 +145,8 @@ embed_dim_vox = args.dim
 print(name)
 writer = SummaryWriter(tensorbaord_dir+name)
 
-# Load subject transfer data (produced by prepare_fmri_single_session.py)
-fmri_file = np.load(data_dir + "subjects_single_ses_fmri.npz")
-single_sub_fmri = fmri_file[TRANSFER_SUB][:num_samples]
-
-imgid_file = np.load(data_dir + "subjects_single_ses_imgid.npz")
-img_ids = imgid_file[TRANSFER_SUB][:num_samples]
-
-num_voxels_subjects = np.array([single_sub_fmri.shape[1]])
+fmri_data = np.load(data_dir + "fmri_v2.npz")
+num_voxels_subjects = fmri_data['num_voxels_subjects'].astype(int)
 N = num_voxels_subjects.sum()
     
 param = dec_param(N)
@@ -183,39 +169,64 @@ if(args.clipg):
     param.out_dim = 1664
 
 lr = args.lr
+epochs = 75
 device = torch.device("cuda")
 #################################################     load data ###################################################
 
-# Load image data based on mode
+
+  
+
+type_sample = fmri_data["type_sample"]
+single_sub = fmri_data['single_sub']
+single_sub_fmri = fmri_data['single_sub_fmri']
+multi_sub_fmri = fmri_data['multi_sub_fmri']
+
+
+val_ind = fmri_data['val_single_ind']
+train_ind = np.ones(single_sub_fmri.shape[0], dtype=bool)
+train_ind[val_ind] = False
 if(args.ext):  
-    fmri_ext = np.load(transfer_derived_data_dir + f"ext_fmri_{TRANSFER_SUB}.npy")
+    fmri_ext = np.load(transfer_derived_data_dir + f"ext_fmri_base_remove_sub_{removed_sub}.npy")
 
 if(args.vgg):
-    embed_train = np.load(nsd_data_dir + "nsd_images_112.npy")[img_ids]
+    embed = np.load(data_dir + "nsd_images_112.npy")
+    embed = embed[type_sample == 1]
     
     if(args.ext):
-        embed_ext = np.load(nsd_data_dir + "ext_images_112.npy")
+        embed_ext = np.load(data_dir + "ext_images_112.npy")
 
 if(args.clipg):
     train_total_acc = False
-    embed_train = np.load(nsd_data_dir + "nsd_images_clip.npy")[img_ids]
-    
-    if(args.ext):
-        embed_ext = np.load(nsd_data_dir + "ext_images_clip.npy")
+    embed = np.load(data_dir + "nsd_images_clip.npy")
+    embed = embed[type_sample == 1]
 
-# Set up training data
-X_train = single_sub_fmri
-Y_train = embed_train
-single_sub_train = np.zeros(single_sub_fmri.shape[0]).astype(int)
+    if(args.ext):
+        embed_ext = np.load(data_dir + "ext_images_clip.npy")
+
+
+X_train   = single_sub_fmri[train_ind]
+Y_train   = embed[train_ind]
+single_sub_train = single_sub[train_ind]
+
+X_val   = single_sub_fmri[val_ind]
+Y_val   = embed[val_ind]
+single_sub_val = single_sub[val_ind]
+
+train_mask = single_sub_train != removed_sub
+val_mask   = single_sub_val   != removed_sub
+X_train = X_train[train_mask]
+Y_train = Y_train[train_mask]
+single_sub_train = single_sub_train[train_mask]
+X_val = X_val[val_mask]
+Y_val = Y_val[val_mask]
+single_sub_val = single_sub_val[val_mask]
 
 
 if args.v2c_mapping is not None:
     v2c_mapping = np.load(args.v2c_mapping)
 else:
-    v2c_mapping = np.load(transfer_derived_data_dir + f"v2c_128_mapping_gmm_{TRANSFER_SUB}.npy")
+    v2c_mapping = np.load(transfer_derived_data_dir + f"v2c_{args.centers}_mapping_gmm_remove_sub_{removed_sub}.npy")
 
-# Load nearest neighbor voxel mapping
-NN_vox = np.load(transfer_derived_data_dir + f"v2c_{TRANSFER_SUB}_nnvox.npy")
 
 print("load data")
 #################################################  data generators ###################################################
@@ -234,11 +245,19 @@ dataloader_param = {'batch_size': args.batch,
           'shuffle': True,
           'num_workers': 4}
 
+
+dataloader_test_param = {'batch_size': args.test_batch,
+          'shuffle': False,
+          'num_workers': 4}
+
 train_loader = EmbedGraphDataset(X_train, Y_train,v2c_mapping , single_sub_train ,sub_num_voxels = num_voxels_subjects, sample = True ,num_voxels_to_sample = args.num_vox*1000, num_centers = args.centers, transform=preprocess) #
 if(args.ext):
-    ext_loader = EmbedGraphDataset(fmri_ext, embed_ext,v2c_mapping , single_sub_train,sub_num_voxels = num_voxels_subjects, sample = True ,num_voxels_to_sample = args.num_vox*1000,  rand_subject = True, num_centers = args.centers, transform=preprocess) #
+    ext_valid_subjects = np.delete(np.arange(len(num_voxels_subjects)), removed_sub - 1)
+    ext_loader = EmbedGraphDataset(fmri_ext, embed_ext,v2c_mapping , single_sub_train,sub_num_voxels = num_voxels_subjects, sample = True ,num_voxels_to_sample = args.num_vox*1000,  rand_subject = True, rand_subject_ids = ext_valid_subjects, num_centers = args.centers, transform=preprocess) #
     
     full_loader = DatasetExtWraper(train_loader,ext_loader, sample_factor = args.ext_sample_factor)
+    
+val_loader   = EmbedGraphDataset(X_val, Y_val, v2c_mapping , single_sub_val  , sub_num_voxels = num_voxels_subjects, sample = False, num_centers = args.centers, transform=preprocess )
 
 custom_collate = partial(collate, N_C=args.centers)
 
@@ -248,30 +267,33 @@ if(args.ext):
 else:
     train_generator = DataLoader(train_loader, **dataloader_param,collate_fn=custom_collate) #
 
+val_generator = DataLoader(val_loader, **dataloader_test_param,collate_fn=custom_collate) #
+
 print("data loaders")
 
 #################################################  Train ###################################################
 
+warmup_epochs = args.warmup_epochs
+
+
+def warmup(epoch, warmup_epochs = warmup_epochs, start_lr=1e-3 ):
+    factor = 1
+    if(epoch<warmup_epochs):
+        factor =  start_lr+(1-start_lr)* ((float(epoch) / float(warmup_epochs)) ** 3)
+    return factor
+
+
 
 def main():
-    # Load pretrained base model (trained without this subject)
-    if(args.vgg):
-        model = torch.load(save_dir + f"decoder_vgg_ext-1_batch64_base_remove_sub_{args.subject}_save.pth")
-    if(args.clipg):
-        model = torch.load(save_dir + f"decoder_clipg_ext-1_base_remove_sub_{args.subject}_save.pth")
-
-    # Freeze all model parameters
-    for model_param in model.parameters():
-        model_param.requires_grad = False
-
-    # Initialize voxel embeddings from nearest-neighbor voxels in the pretrained model (vs random init);
-    # improves transfer-learning performance see paper appendix for details.
-    original_voxel_embed = model.voxel_embed.data.clone()
-    NN_vox_tensor = torch.from_numpy(NN_vox).long()
-    new_voxel_embed = original_voxel_embed[NN_vox_tensor]
-    model.voxel_embed = nn.Parameter(new_voxel_embed, requires_grad=True)
-    #model.voxel_embed = nn.Parameter((param.init/(2*np.sqrt(param.embed_dim_vox)))*torch.randn(N, param.embed_dim_vox), requires_grad=True)
-
+    os.makedirs(save_dir, exist_ok=True)
+    model = Decoder(param, conv_layer = conv_layer) #, vox2centers_bitmap,centers2vox_list
+    if(args.finetune is not None):
+        model = torch.load(args.finetune)
+        # Freeze all parameters
+        for model_param in model.parameters():
+            model_param.requires_grad = False
+        # Only unfreeze voxel_embed parameter
+        model.voxel_embed.requires_grad = True
     model = model.cuda()
     model.float()
     
@@ -289,6 +311,16 @@ def main():
         optimizer = optim.AdamW(model.parameters(), lr=lr)
     else:
         optimizer = optim.Adam(model.parameters(), lr=lr, amsgrad = True)
+        
+    scheduler = ReduceLROnPlateau(optimizer, patience=args.patience, verbose=True,mode='min', factor=0.1,threshold=0.001,threshold_mode ='abs')
+    if(args.warmup):
+        scheduler_warmup = LambdaLR(optimizer, warmup) 
+    best_metric = 1e5
+    metric = 0
+    metrics_dict={}
+    metrics_dict['mse'] = lambda pred, target: F.mse_loss(pred, target)
+    metrics_dict['mae'] = lambda pred, target: F.l1_loss(pred, target)
+    return_metric = None
     
     if(args.contrastive):
         if args.vgg:
@@ -299,17 +331,42 @@ def main():
             loss_func = ClipLoss()
     else:
         loss_func = F.mse_loss
+        return_metric = 'mse'
     
+    metric = test(model, device, val_generator, 0, writer, loss_func=loss_func, 
+                 metrics=metrics_dict, return_metric=return_metric, feat_extractor=vgg_feat,
+                 loss_contrastive=args.contrastive)
+
     for epoch in range(1,epochs+1):
         print(epoch)        
+        if(args.warmup and epoch<warmup_epochs+1):
+            scheduler_warmup.step()
+        else:
+            scheduler.step(metric)  # loss
+            
         print("LR",optimizer.param_groups[0]['lr'])
         
         train(model, device, train_generator, optimizer, epoch, writer, loss_func=loss_func, 
-             metrics=None, feat_extractor=vgg_feat, loss_contrastive=args.contrastive)       
+             metrics=metrics_dict, feat_extractor=vgg_feat, loss_contrastive=args.contrastive)
+       
+        metric = test(model, device, val_generator, epoch, writer, loss_func=loss_func, 
+                     metrics=metrics_dict, return_metric=return_metric, feat_extractor=vgg_feat,
+                     loss_contrastive=args.contrastive)
+        print("metric sch:",metric)
+        
+        if not args.save_last:
+            if(metric<best_metric):
+                best_metric = metric
+                if(args.save):
+                    torch.save(model, save_dir+str(name)+".pth")
+                    print("save best",epoch,best_metric)
+        if(optimizer.param_groups[0]['lr']<1e-7):
+            break       
     
-    # Save last model after training
-    torch.save(model, save_dir+str(name)+".pth")
-    print("Saved last model after training")
+    # Save last model if save_last flag is set
+    if args.save_last and args.save:
+        torch.save(model, save_dir+str(name)+".pth")
+        print("save last model")
 
 if __name__ == '__main__':
     main()

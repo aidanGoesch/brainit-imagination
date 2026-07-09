@@ -1,0 +1,40 @@
+#!/bin/bash
+# Run all NSD data processing scripts in order.
+#
+# Pass --inference-only to process only the data needed for inference
+# (skips COCO processing and only generates resolution 224).
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROCESSING_DIR="${SCRIPT_DIR}/data_processing"
+
+extra_args=()
+if [[ "${1:-}" == "--inference-only" ]]; then
+    extra_args+=(--inference-only)
+fi
+
+SCRIPTS=(
+    prepare_imgs.py
+    prepare_fmri.py
+    prepare_clip.py
+)
+
+failed=0
+
+for script in "${SCRIPTS[@]}"; do
+    echo "=== Running ${script} ==="
+    if python "${PROCESSING_DIR}/${script}" "${extra_args[@]}"; then
+        echo "[SUCCESS] ${script}"
+    else
+        code=$?
+        echo "[FAILED]  ${script} (exit code: ${code})"
+        failed=$((failed + 1))
+    fi
+    echo
+done
+
+if [[ "${failed}" -gt 0 ]]; then
+    echo "${failed} script(s) failed."
+    exit 1
+fi
+
+echo "All scripts completed successfully."
