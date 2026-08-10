@@ -77,7 +77,7 @@ def main():
     args = parser.parse_args()
 
     # Paths - nsd_data directory
-    data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'nsd_data')
+    data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'nsd_data')
     
     if args.inference_only:
         input_files = [

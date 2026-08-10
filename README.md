@@ -30,17 +30,19 @@ After setting up the environment (see Requirements), run inference with the pret
 
 **Data**
 ```bash
-bash data/scripts/run_all_downloads --inference-only
-bash data/scripts/run_all_data_processing --inference-only
+./data/scripts/run_all_downloads --inference-only
+./data/scripts/run_all_data_processing --inference-only
 ```
+(scripts should be made executable with `chmod +x`)
 
 **Models**
 
 Pretrained checkpoints are hosted on [Hugging Face](https://huggingface.co/RomanBeliy/Brain-IT) (download_checkpoints.py script will download them):
 ```bash
-bash data/scripts/download/download_external_models
+./data/scripts/download/download_external_models
 python data/scripts/download/download_checkpoints.py
 ```
+(scripts should be made executable with `chmod +x`)
 
 **Run**
 ```bash
@@ -70,8 +72,9 @@ Brain-IT/
 
 Download NSD stimulus images, fMRI beta maps, and ROI masks for all 8 NSD subjects, as well as COCO unlabeled images:
 ```bash
-bash data/scripts/run_all_downloads
+./data/scripts/run_all_downloads
 ```
+(scripts should be made executable with `chmod +x`)
 
 Download pretrained model checkpoints and voxel-to-cluster mapping from [Hugging Face](https://huggingface.co/RomanBeliy/Brain-IT):
 ```bash
@@ -86,8 +89,9 @@ This places files in:
 
 Run all data processing steps:
 ```bash
-bash data/scripts/run_all_data_processing
+./data/scripts/run_all_data_processing
 ```
+(scripts should be made executable with `chmod +x`)
 
 Or run individual steps manually:
 ```bash
