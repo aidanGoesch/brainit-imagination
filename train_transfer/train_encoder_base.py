@@ -55,7 +55,7 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('--remove_sub', type=int, default=1, help='subject number (1-8) to exclude from training and validation')
 args = parser.parse_args()
-removed_sub = args.remove_sub
+removed_sub = args.remove_sub - 1
 
 batch_size = 32
 lr = 1e-3 #0.001
@@ -89,7 +89,7 @@ single_sub_val = single_sub[val_ind]
 
 # exclude removed subject from training and validation
 train_mask = single_sub_train != removed_sub
-val_mask   = single_sub_val   != removed_sub
+val_mask   = (single_sub_val != removed_sub) & np.isin(single_sub_val, [0, 1, 4, 6])
 embeds_single_train   = embeds_single_train[train_mask]
 single_sub_fmri_train = single_sub_fmri_train[train_mask]
 single_sub_train      = single_sub_train[train_mask]
@@ -103,7 +103,7 @@ NUM_VOXELS = int(num_voxels_subjects.sum())
 layer_attn_temp = 20#layer_attn_temp
 layer_attn_temp_factor = layer_attn_temp_factor#layer_attn_temp_factor
 
-name = 'encoder_ch'+str(inner_ch)+'_base_remove_sub_'+str(removed_sub)
+name = 'encoder_ch'+str(inner_ch)+'_base_remove_sub_'+str(args.remove_sub)
 
 print(name)
 enc_param = encoder_param(NUM_VOXELS)

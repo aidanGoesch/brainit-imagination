@@ -81,6 +81,10 @@ single_sub_train = single_sub[train_ind]
 embeds_single_val = embeds_single[val_ind]
 single_sub_fmri_val = single_sub_fmri[val_ind]
 single_sub_val = single_sub[val_ind]
+val_mask = np.isin(single_sub_val, [0, 1, 4, 6])
+embeds_single_val = embeds_single_val[val_mask]
+single_sub_fmri_val = single_sub_fmri_val[val_mask]
+single_sub_val = single_sub_val[val_mask]
 
 NUM_VOXELS = int(num_voxels_subjects.sum())
 

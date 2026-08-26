@@ -73,7 +73,7 @@ transfer_derived_data_dir = "data/derived_data/transfer/"
 tensorbaord_dir =  'logs/tensorboard/decoder_stage2/'
 
 args = parse_arguments()
-removed_sub = args.remove_sub
+removed_sub = args.remove_sub - 1
 # Control variable for all saves/outputs
 
 # Training hyperparameters
@@ -97,7 +97,7 @@ name = "decoder_stage2"
 if(args.ext):
     name+="_ext"+str(args.ext_sample_factor)
 
-name += "_base_remove_sub_"+str(removed_sub)
+name += "_base_remove_sub_"+str(args.remove_sub)
 
 
 
@@ -151,7 +151,7 @@ def main():
     train_ind = np.ones(single_sub_fmri.shape[0], dtype=bool)
     train_ind[val_ind] = False
     if(args.ext):  
-        fmri_ext = np.load(transfer_derived_data_dir + f"ext_fmri_base_remove_sub_{removed_sub}.npy")
+        fmri_ext = np.load(transfer_derived_data_dir + f"ext_fmri_base_remove_sub_{args.remove_sub}.npy")
 
 
     images = np.load(data_dir + "nsd_images_256.npy")
@@ -170,7 +170,7 @@ def main():
     single_sub_val = single_sub[val_ind]
 
     train_mask = single_sub_train != removed_sub
-    val_mask   = single_sub_val   != removed_sub
+    val_mask   = (single_sub_val != removed_sub) & np.isin(single_sub_val, [0, 1, 4, 6])
     X_train = X_train[train_mask]
     Y_train = Y_train[train_mask]
     single_sub_train = single_sub_train[train_mask]
@@ -182,7 +182,7 @@ def main():
     if args.v2c_mapping is not None:
         v2c_mapping = np.load(args.v2c_mapping)
     else:
-        v2c_mapping = np.load(transfer_derived_data_dir + f"v2c_{args.centers}_mapping_gmm_remove_sub_{removed_sub}.npy")
+        v2c_mapping = np.load(transfer_derived_data_dir + f"v2c_{args.centers}_mapping_gmm_remove_sub_{args.remove_sub}.npy")
 
 
     print("load data")
@@ -191,7 +191,7 @@ def main():
                                          , sample = True ,num_voxels_to_sample = args.num_vox*1000, 
                                          num_centers = args.centers, transform=image_transform) 
     if(args.ext):
-        ext_valid_subjects = np.delete(np.arange(len(num_voxels_subjects)), removed_sub - 1)
+        ext_valid_subjects = np.delete(np.arange(len(num_voxels_subjects)), removed_sub)
         ext_dataset = EmbedGraphDataset(fmri_ext, images_ext,v2c_mapping , single_sub_train,sub_num_voxels = num_voxels_subjects
                                        , sample = True ,num_voxels_to_sample = args.num_vox*1000,  rand_subject = True, rand_subject_ids = ext_valid_subjects,
                                        num_centers = args.centers, transform=image_transform) 
@@ -253,7 +253,7 @@ def main():
     diffusion_engine = load_diffusion_engine()
             
     if(args.gnn_model_path == None):
-        gnn_model = torch.load(save_dir+f"decoder_clipg_ext-1_base_remove_sub_{removed_sub}_save.pth")
+        gnn_model = torch.load(save_dir+f"decoder_clipg_ext-1_base_remove_sub_{args.remove_sub}_save.pth")
     else:
         gnn_model = torch.load(args.gnn_model_path)
 

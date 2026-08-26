@@ -64,7 +64,7 @@ parser.add_argument('--VGG', dest='vgg', action='store_const', const=True, defau
 parser.add_argument('--remove_sub', type=int, default=1, help='subject number (1-8) to exclude from training and validation')
 
 args = parser.parse_args()
-removed_sub = args.remove_sub
+removed_sub = args.remove_sub - 1
 
 # Adjust batch size for VGG mode (cap at 64 if larger)
 if args.vgg and args.batch > 64:
@@ -116,7 +116,7 @@ if(args.lr!=5e-4):
 if(args.warmup_epochs!=15):
     name+="_warmup_epochs"+str(args.warmup_epochs)     
 
-name += "_base_remove_sub_"+str(removed_sub)
+name += "_base_remove_sub_"+str(args.remove_sub)
    
            
 if(use_wandb):
@@ -186,7 +186,7 @@ val_ind = fmri_data['val_single_ind']
 train_ind = np.ones(single_sub_fmri.shape[0], dtype=bool)
 train_ind[val_ind] = False
 if(args.ext):  
-    fmri_ext = np.load(transfer_derived_data_dir + f"ext_fmri_base_remove_sub_{removed_sub}.npy")
+    fmri_ext = np.load(transfer_derived_data_dir + f"ext_fmri_base_remove_sub_{args.remove_sub}.npy")
 
 if(args.vgg):
     embed = np.load(data_dir + "nsd_images_112.npy")
@@ -213,7 +213,7 @@ Y_val   = embed[val_ind]
 single_sub_val = single_sub[val_ind]
 
 train_mask = single_sub_train != removed_sub
-val_mask   = single_sub_val   != removed_sub
+val_mask   = (single_sub_val != removed_sub) & np.isin(single_sub_val, [0, 1, 4, 6])
 X_train = X_train[train_mask]
 Y_train = Y_train[train_mask]
 single_sub_train = single_sub_train[train_mask]
@@ -225,7 +225,7 @@ single_sub_val = single_sub_val[val_mask]
 if args.v2c_mapping is not None:
     v2c_mapping = np.load(args.v2c_mapping)
 else:
-    v2c_mapping = np.load(transfer_derived_data_dir + f"v2c_{args.centers}_mapping_gmm_remove_sub_{removed_sub}.npy")
+    v2c_mapping = np.load(transfer_derived_data_dir + f"v2c_{args.centers}_mapping_gmm_remove_sub_{args.remove_sub}.npy")
 
 
 print("load data")
@@ -252,7 +252,7 @@ dataloader_test_param = {'batch_size': args.test_batch,
 
 train_loader = EmbedGraphDataset(X_train, Y_train,v2c_mapping , single_sub_train ,sub_num_voxels = num_voxels_subjects, sample = True ,num_voxels_to_sample = args.num_vox*1000, num_centers = args.centers, transform=preprocess) #
 if(args.ext):
-    ext_valid_subjects = np.delete(np.arange(len(num_voxels_subjects)), removed_sub - 1)
+    ext_valid_subjects = np.delete(np.arange(len(num_voxels_subjects)), removed_sub)
     ext_loader = EmbedGraphDataset(fmri_ext, embed_ext,v2c_mapping , single_sub_train,sub_num_voxels = num_voxels_subjects, sample = True ,num_voxels_to_sample = args.num_vox*1000,  rand_subject = True, rand_subject_ids = ext_valid_subjects, num_centers = args.centers, transform=preprocess) #
     
     full_loader = DatasetExtWraper(train_loader,ext_loader, sample_factor = args.ext_sample_factor)

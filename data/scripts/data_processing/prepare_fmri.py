@@ -110,7 +110,7 @@ for subj in range(1, 9):
     fmri = sub_fmri[subj]
     for i in range(fmri.shape[0]):
         global_ind = sub_to_global[subj - 1, ses_to_sub[i]]
-        single_sub[global_ind] = subj
+        single_sub[global_ind] = subj - 1
 single_sub = single_sub.astype(int)
 
 type_desc = np.array({0: 'no measurment', 1: 'single sub', 2: 'multi sub'}, dtype=object)

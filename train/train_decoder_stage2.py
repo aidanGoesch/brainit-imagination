@@ -163,6 +163,10 @@ def main():
     X_val   = single_sub_fmri[val_ind]
     Y_val   = images_single[val_ind]
     single_sub_val = single_sub[val_ind]
+    val_mask = np.isin(single_sub_val, [0, 1, 4, 6])
+    X_val = X_val[val_mask]
+    Y_val = Y_val[val_mask]
+    single_sub_val = single_sub_val[val_mask]
 
 
     if args.v2c_mapping is not None:
