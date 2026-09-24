@@ -6,13 +6,11 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from nilearn.datasets import fetch_language_localizer_demo_dataset
-from nilearn.glm.first_level import FirstLevelModel, first_level_from_bids
-from nilearn.plotting import plot_design_matrix, plot_stat_map, show
+from nilearn.glm.first_level import FirstLevelModel
+from nilearn.plotting import plot_design_matrix
 from nilearn.glm.first_level import make_first_level_design_matrix
 
 from bids import BIDSLayout
-import nilearn.image as nimg
 from sklearn.utils import Bunch
 
 # debug flag - plots design matrix rn
@@ -22,7 +20,6 @@ NUM_DESIGN_MAT_PLOTS = 3
 # default values for the GLM that should hold for all participants and runs
 SPACE_NAME = 'MNI152NLin2009cAsym'
 
-TR_VALUE = 2.0
 HRF_MODEL = 'spm'        
 DRIFT_MODEL = 'cosine'   
 FD_THRESH = 0.3
@@ -31,27 +28,50 @@ FD_THRESH = 0.3
 # -------------------------------------- functions -------------------------------------- 
 def lss_transformer(events_df, row_number, id_cols):
     """Isolate one trial for LSS, building its label from id_cols."""
-    events_df = events_df.copy()
+    events_df = events_df.reset_index(drop=True).copy()
+    if not 0 <= row_number < len(events_df):
+        raise IndexError(f"trial row {row_number} outside 0..{len(events_df) - 1}")
 
     events_df["trial_id"] = events_df[id_cols].astype(str).agg("_".join, axis=1)
 
-    trial_name = f"{events_df.loc[row_number, 'trial_id']}__{row_number:03d}"
+    trial_name = f"{events_df.iloc[row_number]['trial_id']}__{row_number:03d}"
 
     events_df["trial_type"] = "other"
-    events_df.loc[row_number, "trial_type"] = trial_name
+    events_df.at[row_number, "trial_type"] = trial_name
 
     return events_df, trial_name
+
+
+def build_lss_design_matrix(
+        events_df, trial_idx, frame_times, id_cols, add_regs=None,
+        add_reg_names=None, hrf_model=HRF_MODEL, drift_model=DRIFT_MODEL):
+    """Construct one LS-S design and return it with the target column name."""
+    lss_events_df, trial_condition = lss_transformer(
+        events_df, trial_idx, id_cols=id_cols
+    )
+    event_columns = ["onset", "duration", "trial_type"]
+    if "modulation" in lss_events_df:
+        event_columns.append("modulation")
+    design = make_first_level_design_matrix(
+        frame_times=frame_times,
+        events=lss_events_df[event_columns],
+        hrf_model=hrf_model,
+        drift_model=drift_model,
+        add_regs=add_regs,
+        add_reg_names=add_reg_names,
+    )
+    return design, trial_condition
 
 
 def make_and_save_design_matrix(events_df, trial_idx, frame_times, hrf_model,
         drift_model, add_regs, add_reg_names, id_cols, output_dir="./design_matrix_checks", tag="",):
     os.makedirs(output_dir, exist_ok=True)
 
-    lss_events_df, trial_condition = lss_transformer(events_df, trial_idx, id_cols=id_cols)
-
-    lss_design_matrix = make_first_level_design_matrix(
+    lss_design_matrix, trial_condition = build_lss_design_matrix(
+        events_df=events_df,
+        trial_idx=trial_idx,
         frame_times=frame_times,
-        events=lss_events_df,
+        id_cols=id_cols,
         hrf_model=hrf_model,
         drift_model=drift_model,
         add_regs=add_regs,
@@ -78,6 +98,7 @@ def main(subject, session, out_root="."):
     "Runs main GLM Script"
     sub_id = subject
     session_id = session   # renaming to avoid shadowing the param name below if you reuse `session`
+    out_root = os.path.abspath(out_root)
 
     # set up data layout — use out_root instead of hardcoded paths
     layout = BIDSLayout(f"{out_root}/bids_data",
@@ -114,12 +135,10 @@ def main(subject, session, out_root="."):
                     return_type='file')
 
 
-            for name, files in [("func", func_files), ("mask", mask_files), ("confounds", confounds_files)]:
+            for name, files in [
+                    ("func", func_files), ("events", events_files),
+                    ("mask", mask_files), ("confounds", confounds_files)]:
                 assert len(files) == 1, f"Expected exactly 1 {name} file, got {len(files)}: {files}"
-
-            if not (func_files and events_files and confounds_files):
-                print(f"Skipping sub-{sub_id} ses-{session_id} task-{task} run-{run}: missing files")
-                continue
 
 
             # print("func files (used the first one")
@@ -136,11 +155,14 @@ def main(subject, session, out_root="."):
             )
             
             # get events
-            events_df = pd.read_csv(dataset.events[0], sep="\t")
+            events_df = pd.read_csv(dataset.events[0], sep="\t").reset_index(drop=True)
 
             img = nib.load(dataset.func[0])
             num_volumes = img.shape[3]
-            frame_times = np.arange(num_volumes) * TR_VALUE
+            run_tr = float(img.header.get_zooms()[3])
+            if not np.isfinite(run_tr) or run_tr <= 0:
+                raise ValueError(f"Invalid TR {run_tr} in {dataset.func[0]}")
+            frame_times = np.arange(num_volumes) * run_tr
 
             # get confounds from events df 
             confounds_df = pd.read_csv(dataset.confounds[0], sep="\t")
@@ -158,6 +180,10 @@ def main(subject, session, out_root="."):
 
             # construct nuissance regressor mat
             all_confounds = pd.concat([motion_params, acompcor_params], axis=1)
+            for outlier_tr in outlier_trs:
+                column = np.zeros(num_volumes)
+                column[outlier_tr] = 1.0
+                all_confounds[f"motion_outlier_{outlier_tr:03d}"] = column
             add_regs = all_confounds.values
             add_reg_names = all_confounds.columns.tolist()
 
@@ -188,11 +214,11 @@ def main(subject, session, out_root="."):
                         quit(1)
 
                     continue
-                lss_events_df, trial_condition = lss_transformer(events_df, trial_idx, id_cols=id_cols)
-                # create actual model
-                lss_design_matrix = make_first_level_design_matrix(
+                lss_design_matrix, trial_condition = build_lss_design_matrix(
+                    events_df=events_df,
+                    trial_idx=trial_idx,
                     frame_times=frame_times,
-                    events=lss_events_df,
+                    id_cols=id_cols,
                     hrf_model=HRF_MODEL,
                     drift_model=DRIFT_MODEL,
                     add_regs=add_regs,
@@ -201,7 +227,7 @@ def main(subject, session, out_root="."):
 
                 # breakpoint()
                 # fit the model
-                glm = FirstLevelModel(t_r=TR_VALUE, hrf_model=HRF_MODEL, drift_model=DRIFT_MODEL, mask_img=mask_files[0], signal_scaling=False)
+                glm = FirstLevelModel(t_r=run_tr, hrf_model=HRF_MODEL, drift_model=DRIFT_MODEL, mask_img=mask_files[0], signal_scaling=False)
                 glm.fit(dataset.func[0], design_matrices=lss_design_matrix)
 
                 beta_map = glm.compute_contrast(trial_condition, output_type='effect_size')
@@ -214,7 +240,7 @@ def main(subject, session, out_root="."):
                 beta_path = os.path.join(output_dir, beta_filename)
                 beta_map.to_filename(beta_path)
 
-                trial_row = events_df.loc[trial_idx]
+                trial_row = events_df.iloc[trial_idx]
                 
                 if task == 'recognition':
                     stim_info = {"imageid": trial_row["imageid"]}

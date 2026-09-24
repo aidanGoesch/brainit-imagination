@@ -9,14 +9,14 @@ can generate a near-noiseless dataset to test whether your GLM correctly
 recovers a known signal, independent of how realistic/noisy the data is.
 
 Usage:
-    python generate.py --noise-level none   --signal-magnitude 3.0
-    python generate.py --noise-level medium --signal-magnitude 1.5
-    python generate.py --noise-level high    --signal-magnitude 1.5 --resolution 2
+    python generate_synthetic.py --noise-level none --signal-magnitude 3.0
+    python generate_synthetic.py --noise-level medium --signal-magnitude 1.5
+    python generate_synthetic.py --noise-level high --signal-magnitude 1.5 --resolution 2
 
 Validate the generated data only (no GLM involved):
-    python generate.py --test
+    python generate_synthetic.py --test
 or, if you have pytest installed:
-    pytest generate.py -v
+    pytest generate_synthetic.py -v
 """
 import os
 import json
@@ -102,6 +102,37 @@ def pad_or_truncate(x, target_len):
     return np.vstack([x, pad])
 
 
+def build_condition_signal_function(onsets, total_time, n_volumes):
+    """Build one condition's HRF at scan (TR) resolution.
+
+    BrainIAK's ``convolve_hrf`` consumes a fine-resolution stimulus function
+    but already returns one sample per TR.  Its output must not be downsampled
+    a second time.
+    """
+    stimfunction_fine = sim.generate_stimfunction(
+        onsets=list(onsets),
+        event_durations=[EVENT_DURATION] * len(onsets),
+        total_time=total_time,
+        temporal_resolution=FINE_RES,
+    )
+    signal_function = sim.convolve_hrf(
+        stimfunction=stimfunction_fine,
+        tr_duration=TR,
+        temporal_resolution=FINE_RES,
+    )
+    return pad_or_truncate(signal_function, n_volumes)
+
+
+def historical_double_downsample(signal_function, n_volumes):
+    """Reproduce the former timing bug for regression diagnostics only."""
+    fine_length = int(round(n_volumes * TR * FINE_RES))
+    step = int(round(FINE_RES * TR))
+    return pad_or_truncate(
+        pad_or_truncate(signal_function, fine_length)[::step],
+        n_volumes,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Real brain geometry
 # ---------------------------------------------------------------------------
@@ -131,7 +162,11 @@ def pick_roi_center(mask, roi_half, rng):
 # ---------------------------------------------------------------------------
 # Main generation
 # ---------------------------------------------------------------------------
-def main(signal_magnitude=1.5, noise_level="medium", resolution_mm=3, out_root="."):
+def main(
+        signal_magnitude=1.5, noise_level="medium", resolution_mm=3,
+        out_root=".", signal_method="CNR_Amp/Noise-SD"):
+    # BrainIAK uses NumPy's legacy global RNG internally.
+    np.random.seed(SEED)
     rng = np.random.default_rng(SEED)
     np_rng = np.random.RandomState(SEED)  # some brainiak calls want legacy RandomState
 
@@ -220,18 +255,15 @@ def main(signal_magnitude=1.5, noise_level="medium", resolution_mm=3, out_root="
     signal_4d = np.zeros(DIM + (n_volumes,))
     for cond, pattern in patterns.items():
         cond_onsets = trials.loc[trials.imageid == cond, "onset"].tolist()
-        stimfunction_fine = pad_or_truncate(
-            sim.generate_stimfunction(
-                onsets=cond_onsets, event_durations=[EVENT_DURATION] * len(cond_onsets),
-                total_time=total_time, temporal_resolution=FINE_RES,
-            ), EXPECTED_FINE_LEN)
-        signal_function_fine = sim.convolve_hrf(
-            stimfunction=stimfunction_fine, tr_duration=TR, temporal_resolution=FINE_RES)
-        signal_function = downsample_to_tr(signal_function_fine, n_volumes)
+        signal_function = build_condition_signal_function(
+            cond_onsets,
+            total_time=total_time,
+            n_volumes=n_volumes,
+        )
 
         scaled = sim.compute_signal_change(
             signal_function, noise_roi[:, None], noise_dict,
-            magnitude=[signal_magnitude], method="CNR_Amp/Noise-SD",
+            magnitude=[signal_magnitude], method=signal_method,
         )
 
         volume_signal = np.zeros(DIM)
@@ -322,7 +354,7 @@ def main(signal_magnitude=1.5, noise_level="medium", resolution_mm=3, out_root="
 
     print()
     print("All checks passed. Dataset is ready at:", P["bids_root"])
-    print("Validate the data alone with: python generate.py --test")
+    print("Validate the data alone with: python generate_synthetic.py --test")
 
 
 # ---------------------------------------------------------------------------
@@ -461,6 +493,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--signal-magnitude", type=float, default=1.5)
     parser.add_argument("--noise-level", choices=list(NOISE_PRESETS), default="medium")
+    parser.add_argument(
+        "--signal-method",
+        choices=["CNR_Amp/Noise-SD", "PSC"],
+        default="CNR_Amp/Noise-SD",
+        help="CNR scales signal with noise; PSC keeps signal approximately fixed",
+    )
     parser.add_argument("--resolution", type=int, default=3, help="MNI template resolution in mm")
     parser.add_argument("--out-root", type=str, default=".")
     parser.add_argument("--test", action="store_true", help="only run the data-validation tests")
@@ -471,4 +509,5 @@ if __name__ == "__main__":
         run_all_tests()
     else:
         main(signal_magnitude=args.signal_magnitude, noise_level=args.noise_level,
-             resolution_mm=args.resolution, out_root=args.out_root)
+             resolution_mm=args.resolution, out_root=args.out_root,
+             signal_method=args.signal_method)
